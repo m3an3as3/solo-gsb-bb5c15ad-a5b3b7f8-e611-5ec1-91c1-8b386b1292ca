@@ -1,0 +1,7 @@
+services:
+  srt-calibrator:
+    build: .
+    container_name: srt-calibrator
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

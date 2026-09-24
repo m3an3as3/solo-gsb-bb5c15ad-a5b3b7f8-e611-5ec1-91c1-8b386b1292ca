@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SRT 字幕时间校准</title>
+<style>
+  :root {
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --border: #d8dee9;
+    --text: #1f2933;
+    --muted: #64748b;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --danger-bg: #fef2f2;
+    --danger-border: #fca5a5;
+    --danger-text: #b91c1c;
+    --warn-bg: #fffbeb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    resize: vertical;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    border: none;
+    border-radius: 6px;
+    padding: 9px 18px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button.primary { background: var(--primary); color: #fff; }
+  button.primary:hover { background: var(--primary-hover); }
+  button.ghost { background: #eef2f7; color: var(--text); }
+  button.ghost:hover { background: #e2e8f0; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input[type="text"] {
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px;
+    width: 150px;
+  }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  table.anchors { border-collapse: collapse; width: 100%; }
+  table.anchors th, table.anchors td {
+    text-align: left;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  table.anchors th { color: var(--muted); font-weight: normal; }
+  .arrow { color: var(--muted); padding: 0 4px; }
+  .del { color: var(--danger-text); background: none; padding: 4px 8px; }
+  .alert {
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 14px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .alert.error { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text); }
+  .alert.warn { background: var(--warn-bg); border: 1px solid #fcd34d; color: #92400e; }
+  .stats { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .preview-wrap { overflow-x: auto; }
+  table.preview {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+  }
+  table.preview th, table.preview td {
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  table.preview th { background: #f8fafc; white-space: nowrap; }
+  table.preview tr.bad { background: var(--danger-bg); }
+  table.preview td.text-cell {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    max-width: 320px;
+  }
+  .tag {
+    display: inline-block;
+    background: var(--danger-text);
+    color: #fff;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 12px;
+    margin: 1px 3px 1px 0;
+    white-space: nowrap;
+  }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>SRT 字幕时间校准</h1>
+  <p class="subtitle">设置“原字幕时刻 → 视频实际时刻”锚点，相邻锚点间线性插值、两端按最近斜率外推。</p>
+
+  <div class="card">
+    <h2>1. 粘贴或上传 SRT</h2>
+    <textarea id="srtInput" placeholder="1&#10;00:00:01,000 --> 00:00:04,000&#10;第一条字幕正文……"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" type="button" onclick="document.getElementById('fileInput').click()">上传 .srt 文件</button>
+      <input type="file" id="fileInput" accept=".srt,text/plain" style="display:none">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2. 设置锚点（至少 2 个）</h2>
+    <table class="anchors">
+      <thead>
+        <tr><th style="width:40px">#</th><th>原字幕时刻</th><th></th><th>视频实际时刻</th><th style="width:60px"></th></tr>
+      </thead>
+      <tbody id="anchorBody"></tbody>
+    </table>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" type="button" id="addAnchor">+ 添加锚点</button>
+    </div>
+    <p class="hint">时间格式 <span class="mono">HH:MM:SS,mmm</span>（也可用 <span class="mono">MM:SS,mmm</span>）。原时刻不可重复，映射时刻须严格递增；锚点会自动按原时刻排序。</p>
+  </div>
+
+  <div class="card">
+    <h2>3. 预览与导出</h2>
+    <div id="alertBox" class="alert error"></div>
+    <div class="row">
+      <button class="primary" type="button" id="previewBtn">预览校准结果</button>
+      <button class="primary" type="button" id="exportBtn" disabled>下载校准后的 SRT</button>
+    </div>
+    <p class="hint">存在 <b>负时间</b>、<b>起止倒置</b> 或 <b>与下一条重叠</b> 的字幕时将禁止导出，请调整锚点。</p>
+  </div>
+
+  <div class="card" id="previewCard" style="display:none">
+    <h2>校准预览</h2>
+    <div class="stats" id="statsLine"></div>
+    <div class="preview-wrap">
+      <table class="preview">
+        <thead>
+          <tr>
+            <th>序号</th>
+            <th>原起止</th>
+            <th>校准后起止</th>
+            <th>问题</th>
+            <th>正文</th>
+          </tr>
+        </thead>
+        <tbody id="previewBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const anchorBody = document.getElementById("anchorBody");
+const srtInput = document.getElementById("srtInput");
+const fileInput = document.getElementById("fileInput");
+const alertBox = document.getElementById("alertBox");
+const previewCard = document.getElementById("previewCard");
+const previewBody = document.getElementById("previewBody");
+const statsLine = document.getElementById("statsLine");
+const exportBtn = document.getElementById("exportBtn");
+
+let lastPayload = null;
+
+function showAlert(msg, kind) {
+  alertBox.textContent = msg;
+  alertBox.className = "alert " + (kind || "error");
+  alertBox.style.display = "block";
+}
+function clearAlert() {
+  alertBox.style.display = "none";
+  alertBox.textContent = "";
+}
+
+function addAnchorRow(original, mapped) {
+  const tr = document.createElement("tr");
+  tr.innerHTML =
+    '<td class="anchor-no"></td>' +
+    '<td><input type="text" class="a-orig" placeholder="00:00:00,000"></td>' +
+    '<td class="arrow">→</td>' +
+    '<td><input type="text" class="a-mapped" placeholder="00:00:00,000"></td>' +
+    '<td><button type="button" class="del">删除</button></td>';
+  tr.querySelector(".a-orig").value = original || "";
+  tr.querySelector(".a-mapped").value = mapped || "";
+  tr.querySelector(".del").addEventListener("click", () => {
+    tr.remove();
+    renumber();
+  });
+  anchorBody.appendChild(tr);
+  renumber();
+}
+
+function renumber() {
+  anchorBody.querySelectorAll("tr").forEach((tr, i) => {
+    tr.querySelector(".anchor-no").textContent = i + 1;
+  });
+}
+
+document.getElementById("addAnchor").addEventListener("click", () => addAnchorRow());
+addAnchorRow("", "");
+addAnchorRow("", "");
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { srtInput.value = reader.result; };
+  reader.readAsText(file, "utf-8");
+});
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function collectPayload() {
+  const anchors = [];
+  anchorBody.querySelectorAll("tr").forEach((tr) => {
+    const original = tr.querySelector(".a-orig").value.trim();
+    const mapped = tr.querySelector(".a-mapped").value.trim();
+    if (!original && !mapped) return;  // 整行空白则忽略
+    anchors.push({ original, mapped });
+  });
+  return { content: srtInput.value, anchors };
+}
+
+function renderPreview(results, hasIssues) {
+  previewBody.innerHTML = "";
+  results.forEach((item) => {
+    const tr = document.createElement("tr");
+    if (item.issues.length) tr.className = "bad";
+    const tags = item.issue_labels
+      .map((l) => '<span class="tag">' + escapeHtml(l) + "</span>")
+      .join("");
+    tr.innerHTML =
+      "<td>" + escapeHtml(item.index) + "</td>" +
+      '<td class="mono">' + escapeHtml(item.orig_start_text) + "<br>→ " +
+        escapeHtml(item.orig_end_text) + "</td>" +
+      '<td class="mono">' + escapeHtml(item.new_start_text) + "<br>→ " +
+        escapeHtml(item.new_end_text) + "</td>" +
+      "<td>" + (tags || "—") + "</td>" +
+      '<td class="text-cell">' + escapeHtml(item.text) + "</td>";
+    previewBody.appendChild(tr);
+  });
+  const badCount = results.filter((i) => i.issues.length).length;
+  statsLine.textContent =
+    "共 " + results.length + " 条字幕" +
+    (badCount ? "，其中 " + badCount + " 条存在问题（已标红），不可导出。"
+              : "，全部正常，可以导出。");
+  exportBtn.disabled = hasIssues;
+  previewCard.style.display = "block";
+}
+
+async function callApi(url, payload, wantDownload) {
+  clearAlert();
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (wantDownload && resp.ok) {
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "calibrated.srt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    return { ok: true };
+  }
+
+  const data = await resp.json().catch(() => ({
+    ok: false, error: "服务器返回了无法解析的响应",
+  }));
+  return data;
+}
+
+document.getElementById("previewBtn").addEventListener("click", async () => {
+  const payload = collectPayload();
+  lastPayload = payload;
+  exportBtn.disabled = true;
+  const data = await callApi("/api/preview", payload, false);
+  if (!data.ok) {
+    previewCard.style.display = "none";
+    showAlert(data.error || "预览失败");
+    return;
+  }
+  renderPreview(data.results, data.has_issues);
+  if (data.has_issues) {
+    showAlert("校准结果中存在问题字幕，已禁止导出。请调整锚点后重新预览。", "warn");
+  }
+});
+
+exportBtn.addEventListener("click", async () => {
+  if (!lastPayload) return;
+  const data = await callApi("/api/export", lastPayload, true);
+  if (data && data.ok === false) {
+    showAlert(data.error || "导出失败");
+  }
+});
+</script>
+</body>
+</html>
